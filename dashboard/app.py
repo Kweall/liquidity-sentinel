@@ -32,7 +32,6 @@ status = latest['status']
 
 status_colors = {"ЗЕЛЁНЫЙ": "green", "ЖЁЛТЫЙ": "orange", "КРАСНЫЙ": "red"}
 
-# Первая строка метрик
 col1, col2, col3, col4 = st.columns([1.5, 1, 1, 1.5])
 
 with col1:
@@ -45,13 +44,11 @@ with col2:
 
 with col3:
     st.metric("📊 Средний LSI", f"{df['lsi'].mean():.1f}")
-    red_days = (df['lsi'] >= 70).sum()
-    st.metric("🔴 Красных дней", f"{red_days}")
+    st.metric("🔴 Красных дней", f"{(df['lsi'] >= 70).sum()}")
 
 with col4:
     st.metric("📅 Последний день", latest['date'].strftime('%Y-%m-%d'))
-    green_days = (df['lsi'] < 40).sum()
-    st.metric("🟢 Зелёных дней", f"{green_days}")
+    st.metric("🟢 Зелёных дней", f"{(df['lsi'] < 40).sum()}")
 
 # ---- График LSI ----
 st.subheader("📈 Индекс стресса ликвидности (LSI)")
@@ -68,10 +65,8 @@ fig.add_trace(go.Scatter(
 ))
 
 # Добавляем зоны
-fig.add_hline(y=40, line_dash="dash", line_color="orange", 
-              annotation_text="Жёлтая зона (40)", annotation_position="bottom right")
-fig.add_hline(y=70, line_dash="dash", line_color="red",
-              annotation_text="Красная зона (70)", annotation_position="top right")
+fig.add_hline(y=40, line_dash="dash", line_color="orange", annotation_text="Жёлтая зона (40)", annotation_position="bottom right")
+fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Красная зона (70)", annotation_position="top right")
 
 fig.update_layout(
     title="Динамика индекса стресса ликвидности за всё время",
@@ -81,14 +76,14 @@ fig.update_layout(
     hovermode='x unified'
 )
 
-st.plotly_chart(fig, width='stretch')
+st.plotly_chart(fig, use_container_width=True)
 
-# ---- Графики модулей ----
+# ---- Графики модулей (теперь 3 графика) ----
 st.subheader("📊 Сигналы модулей (последние 365 дней)")
 
 last_year = df.tail(365)
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     if 'stress_m1' in df.columns:
@@ -124,6 +119,23 @@ with col2:
         )
         st.plotly_chart(fig_m2, width='stretch')
 
+with col3:
+    if 'stress_m3' in df.columns:
+        fig_m3 = go.Figure()
+        fig_m3.add_trace(go.Scatter(
+            x=last_year['date'], 
+            y=last_year['stress_m3'],
+            mode='lines', 
+            name='M3 - ОФЗ',
+            line=dict(color='green', width=2)
+        ))
+        fig_m3.update_layout(
+            title="M3: Аукционы ОФЗ",
+            yaxis_title="Стресс (0-10)",
+            height=300
+        )
+        st.plotly_chart(fig_m3, width='stretch')
+
 # ---- Алерт ----
 st.subheader("🚨 Текущий алерт")
 
@@ -137,10 +149,7 @@ else:
 # ---- Таблица с последними днями ----
 st.subheader("📋 Последние 10 дней")
 
-display_cols = ['date', 'lsi', 'status', 'stress_m1', 'stress_m2']
-available_cols = [c for c in display_cols if c in df.columns]
-
-# Безопасное округление (только числовые колонки)
+available_cols = [c for c in ['date', 'lsi', 'status', 'stress_m1', 'stress_m2', 'stress_m3'] if c in df.columns]
 display_df = df.tail(10)[available_cols].copy()
 for col in display_df.select_dtypes(include=['float64', 'int64']).columns:
     display_df[col] = display_df[col].round(2)
@@ -160,38 +169,17 @@ for name, (start, end) in episodes.items():
     mask = (df['date'] >= start) & (df['date'] <= end)
     if mask.any():
         episode_df = df[mask]
-        avg_lsi = episode_df['lsi'].mean()
-        max_lsi = episode_df['lsi'].max()
-        # Определяем основной статус за период
-        if (episode_df['lsi'] >= 70).any():
-            main_status = "КРАСНЫЙ"
-        elif (episode_df['lsi'] >= 40).any():
-            main_status = "ЖЁЛТЫЙ"
-        else:
-            main_status = "ЗЕЛЁНЫЙ"
-        
         episode_stats.append({
             'Эпизод': name,
-            'Средний LSI': f"{avg_lsi:.1f}",
-            'Макс LSI': f"{max_lsi:.1f}",
-            'Статус': main_status
+            'Средний LSI': f"{episode_df['lsi'].mean():.1f}",
+            'Макс LSI': f"{episode_df['lsi'].max():.1f}",
+            'Статус': episode_df['status'].mode().iloc[0] if not episode_df['status'].mode().empty else 'Н/Д'
         })
 
 if episode_stats:
     st.table(pd.DataFrame(episode_stats))
 else:
     st.info("Данные за стресс-эпизоды не найдены в текущем диапазоне дат")
-
-# ---- Дополнительная статистика ----
-st.subheader("📈 Дополнительная статистика")
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("75-й перцентиль LSI", f"{df['lsi'].quantile(0.75):.1f}")
-with col2:
-    st.metric("90-й перцентиль LSI", f"{df['lsi'].quantile(0.90):.1f}")
-with col3:
-    st.metric("95-й перцентиль LSI", f"{df['lsi'].quantile(0.95):.1f}")
 
 # ---- Информация ----
 st.caption(f"📅 Последнее обновление: {latest['date'].strftime('%Y-%m-%d')} | Система раннего предупреждения стресса ликвидности")

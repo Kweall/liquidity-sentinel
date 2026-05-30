@@ -23,7 +23,6 @@ def normalize_stress(stress_series: pd.Series) -> pd.Series:
 def calculate_lsi_weighted(df: pd.DataFrame, weights: dict) -> pd.DataFrame:
     """
     Рассчитывает LSI как взвешенную сумму сигналов с сигмоидой
-    weights: {'m1': 0.3, 'm2': 0.3, 'm3': 0.15, 'm4': 0.15, 'm5': 0.1}
     """
     df = df.copy()
     
@@ -33,7 +32,7 @@ def calculate_lsi_weighted(df: pd.DataFrame, weights: dict) -> pd.DataFrame:
     
     for module, weight in weights.items():
         col_name = f'signal_{module}'
-        if col_name in df.columns:
+        if col_name in df.columns and weight > 0:
             available_signals.append(df[col_name] * weight)
             total_weight += weight
             print(f"  Используется {module} с весом {weight}")
@@ -41,7 +40,6 @@ def calculate_lsi_weighted(df: pd.DataFrame, weights: dict) -> pd.DataFrame:
     if not available_signals:
         df['lsi_raw'] = 0
     else:
-        # Суммируем с нормализацией по весу
         df['lsi_raw'] = sum(available_signals) / total_weight
     
     # Применяем сигмоиду для нелинейности
@@ -65,6 +63,7 @@ def run():
     print("\n1. Загрузка данных модулей:")
     m1 = load_module_data('m1')
     m2 = load_module_data('m2')
+    m3 = load_module_data('m3')
     
     # 2. Склеиваем по дате
     print("\n2. Склеивание данных...")
@@ -73,6 +72,8 @@ def run():
         dfs.append(m1[['date', 'stress_m1']])
     if not m2.empty:
         dfs.append(m2[['date', 'stress_m2']])
+    if not m3.empty:
+        dfs.append(m3[['date', 'stress_m3']])
     
     if not dfs:
         raise RuntimeError("Нет данных ни от одного модуля")
@@ -85,31 +86,30 @@ def run():
     result = result.sort_values('date').reset_index(drop=True)
     print(f"  Объединено: {len(result)} уникальных дат")
     
-    # 3. Заполняем пропуски (ИСПРАВЛЕННАЯ ЧАСТЬ)
+    # 3. Заполняем пропуски
     print("\n3. Обработка пропусков...")
-    for col in ['stress_m1', 'stress_m2']:
+    for col in ['stress_m1', 'stress_m2', 'stress_m3']:
         if col in result.columns:
-            # Используем ffill() и bfill() вместо fillna(method=...)
             result[col] = result[col].ffill().bfill().fillna(0)
     
     # 4. Нормализуем сигналы
     print("\n4. Нормализация сигналов...")
     result['signal_m1'] = normalize_stress(result['stress_m1'])
     result['signal_m2'] = normalize_stress(result['stress_m2'])
+    result['signal_m3'] = normalize_stress(result['stress_m3'])
     
     # Заглушки для будущих модулей (пока 0)
-    result['signal_m3'] = 0
     result['signal_m4'] = 0
     result['signal_m5'] = 0
     
-    # 5. Рассчитываем LSI (пока только M1 и M2, веса равные)
+    # 5. Рассчитываем LSI с обновлёнными весами
     print("\n5. Расчёт LSI...")
     weights = {
-        'm1': 0.5,
-        'm2': 0.5,
-        'm3': 0.0,
-        'm4': 0.0,
-        'm5': 0.0
+        'm1': 0.30,   # усреднение резервов
+        'm2': 0.40,   # репо ЦБ (самый важный)
+        'm3': 0.30,   # ОФЗ
+        'm4': 0.0,    # налоги (ждём)
+        'm5': 0.0     # казначейство (ждём)
     }
     result = calculate_lsi_weighted(result, weights)
     
@@ -130,6 +130,22 @@ def run():
     print(f"  Красных дней (LSI >= 70): {(result['lsi'] >= 70).sum()}")
     print(f"  Жёлтых дней (40-70): {((result['lsi'] >= 40) & (result['lsi'] < 70)).sum()}")
     print(f"  Зелёных дней (<40): {(result['lsi'] < 40).sum()}")
+    
+    # Дополнительная статистика по стресс-эпизодам
+    print("\n  СТРЕСС-ЭПИЗОДЫ:")
+    episodes = {
+        'Декабрь 2014': ('2014-12-01', '2014-12-31'),
+        'Февраль-март 2022': ('2022-02-01', '2022-03-31'),
+        'Август 2023': ('2023-08-01', '2023-08-31'),
+    }
+    for name, (start, end) in episodes.items():
+        mask = (result['date'] >= start) & (result['date'] <= end)
+        if mask.any():
+            ep_df = result[mask]
+            print(f"    {name}: средний LSI={ep_df['lsi'].mean():.1f}, макс={ep_df['lsi'].max():.1f}")
+        else:
+            print(f"    {name}: нет данных")
+    
     print("=" * 50)
     
     return result
