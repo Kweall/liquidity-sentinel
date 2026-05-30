@@ -7,6 +7,7 @@ requests>=2.31
 beautifulsoup4>=4.12
 openpyxl>=3.1
 streamlit>=1.35
+lxml
 # anthropic>=0.25
 # schedule>=1.2
 # pyarrow>=14.0
