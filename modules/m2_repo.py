@@ -214,10 +214,27 @@ def process_m2(repo_df, keyrate_df):
         result['date'].dt.date.isin(emergency_dates).astype(int)
     )
 
-    result['stress_m2'] = (
-        0.5 * result['mad_score_cover'].clip(lower=0) +
-        0.5 * result['mad_score_rate_spread'].clip(lower=0)
-    )
+    # result['stress_m2'] = (
+    #     0.5 * result['mad_score_cover'].clip(lower=0) +
+    #     0.5 * result['mad_score_rate_spread'].clip(lower=0)
+    # )
+
+    ### ========================================================================================
+    
+    # Нормализуем MAD-скоры в диапазон 0-10 (т.к. они обычно от -5 до +5)
+    result['norm_cover'] = (result['mad_score_cover'] + 5) / 1.0  # -5..+5 -> 0..10
+    result['norm_rate_spread'] = (result['mad_score_rate_spread'] + 5) / 1.0
+
+    # Ограничиваем 0-10
+    result['norm_cover'] = result['norm_cover'].clip(0, 10)
+    result['norm_rate_spread'] = result['norm_rate_spread'].clip(0, 10)
+
+    # Stress как среднее (можно со взвешиванием)
+    result['stress_m2'] = 0.5 * result['norm_cover'] + 0.5 * result['norm_rate_spread']
+    
+    ### ========================================================================================
+
+
     result['stress_m2'] *= np.where(result['Flag_Emergency_1d'] == 1, 1.3, 1.0)
     result['stress_m2'] = result['stress_m2'].clip(0, 10)
     result = result.dropna(subset=['key_rate'])
