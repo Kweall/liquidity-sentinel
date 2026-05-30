@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_datetime64_any_dtype
 
 def mad_score(series: pd.Series, window: int = 756) -> pd.Series:
     shifted = series.shift(1)
@@ -25,7 +26,7 @@ def validate_module_output(df: pd.DataFrame, module_name: str) -> bool:
     Вызывают все модули перед return.
     """
     assert 'date' in df.columns, f"{module_name}: нет колонки date"
-    assert df['date'].dtype == 'datetime64[ns]', f"{module_name}: date не datetime"
+    assert is_datetime64_any_dtype(df['date']), "{module_name}: date не datetime ({df['date'].dtype})"
     assert df['date'].is_monotonic_increasing, f"{module_name}: даты не отсортированы"
     assert not df['date'].duplicated().any(), f"{module_name}: дубли дат"
     return True
