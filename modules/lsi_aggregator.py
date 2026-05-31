@@ -46,13 +46,14 @@ def load_module_data(module_name: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 def normalize_stress(stress_series: pd.Series) -> pd.Series:
-    """Приводит stress (0-10) к 0-1"""
-    return stress_series / 10.0
+    """Приводит stress (0-10) к 0-1 с усилением низких значений"""
+    normalized = stress_series / 10.0
+    # Усиливаем сигнал (возводим в степень 0.7 для поднятия низких значений)
+    return normalized ** 0.7
 
-def calculate_lsi_weighted(df: pd.DataFrame, weights: dict, seasonal_factor_col: str = None) -> pd.DataFrame:
+def calculate_lsi_weighted(df: pd.DataFrame, weights: dict) -> pd.DataFrame:
     """
     Рассчитывает LSI как взвешенную сумму сигналов с сигмоидой
-    и применением сезонного множителя (если указан).
     """
     df = df.copy()
     
@@ -72,14 +73,15 @@ def calculate_lsi_weighted(df: pd.DataFrame, weights: dict, seasonal_factor_col:
     else:
         df['lsi_raw'] = sum(available_signals) / total_weight
     
-    # Применяем сезонный множитель (если есть)
-    if seasonal_factor_col and seasonal_factor_col in df.columns:
-        print(f"  Применяется сезонный множитель: {seasonal_factor_col}")
-        df['lsi_raw'] = df['lsi_raw'] * df[seasonal_factor_col]
+    # Применяем сезонный множитель M4
+    if 'Seasonal_Factor' in df.columns:
+        df['lsi_raw'] = df['lsi_raw'] * df['Seasonal_Factor']
+        print(f"  Применён Seasonal_Factor (диапазон: {df['Seasonal_Factor'].min():.2f} - {df['Seasonal_Factor'].max():.2f})")
     
-    # Применяем сигмоиду для нелинейности
-    k = 6.0
-    df['lsi'] = 100 / (1 + np.exp(-k * (df['lsi_raw'] - 0.5)))
+    # Агрессивная сигмоида (k=10, порог 0.4)
+    k = 10.0
+    df['lsi'] = 100 / (1 + np.exp(-k * (df['lsi_raw'] - 0.4)))
+    df['lsi'] = df['lsi'].clip(0, 100)
     
     # Цветовая зона
     df['status'] = 'ЗЕЛЁНЫЙ'
@@ -94,7 +96,7 @@ def run():
     print(f"Время: {datetime.now()}")
     print("=" * 50)
     
-    # 1. Загружаем все доступные модули (они запустятся автоматически при необходимости)
+    # 1. Загружаем все доступные модули
     print("\n1. Загрузка данных модулей:")
     m1 = load_module_data('m1')
     m2 = load_module_data('m2')
@@ -111,55 +113,53 @@ def run():
         dfs.append(m2[['date', 'stress_m2']])
     if not m3.empty:
         dfs.append(m3[['date', 'stress_m3']])
-    if not m4.empty:
-        dfs.append(m4[['date', 'Tax_Week_Flag', 'End_of_Month_Flag', 'End_of_Quarter_Flag', 'Seasonal_Factor']])
     if not m5.empty:
         dfs.append(m5[['date', 'stress_m5']])
     
     if not dfs:
         raise RuntimeError("Нет данных ни от одного модуля")
     
-    # Начинаем с первого
     result = dfs[0]
     for df in dfs[1:]:
         result = result.merge(df, on='date', how='outer')
     
+    # Добавляем M4 (налоги) с флагами
+    if not m4.empty:
+        m4_cols = ['date', 'Tax_Week_Flag', 'End_of_Month_Flag', 'End_of_Quarter_Flag', 'Seasonal_Factor']
+        result = result.merge(m4[m4_cols], on='date', how='left')
+    
     result = result.sort_values('date').reset_index(drop=True)
     print(f"  Объединено: {len(result)} уникальных дат")
     
-    # 3. Заполняем пропуски
+    # 3. Обработка пропусков
     print("\n3. Обработка пропусков...")
     for col in ['stress_m1', 'stress_m2', 'stress_m3', 'stress_m5']:
         if col in result.columns:
             result[col] = result[col].ffill().bfill().fillna(0)
-        else:
-            result[col] = 0  # создаём колонку с нулями, если её нет
     
-    # Для флагов M4: заполняем NaN нулями (нет события)
+    # Заполняем M4 пропуски
     for col in ['Tax_Week_Flag', 'End_of_Month_Flag', 'End_of_Quarter_Flag', 'Seasonal_Factor']:
         if col in result.columns:
-            result[col] = result[col].fillna(0)
+            result[col] = result[col].ffill().bfill().fillna(0)
         else:
             result[col] = 0
     
-    # 4. Нормализуем сигналы
+    # 4. Нормализуем сигналы (с усилением)
     print("\n4. Нормализация сигналов...")
     result['signal_m1'] = normalize_stress(result['stress_m1'])
     result['signal_m2'] = normalize_stress(result['stress_m2'])
     result['signal_m3'] = normalize_stress(result['stress_m3'])
-    result['signal_m4'] = 0  # M4 не даёт stress
-    result['signal_m5'] = normalize_stress(result['stress_m5']) if 'stress_m5' in result.columns else 0
+    result['signal_m5'] = normalize_stress(result['stress_m5'])
     
-    # 5. Рассчитываем LSI с обновлёнными весами и учётом сезонности
+    # 5. Расчёт LSI с обновлёнными весами
     print("\n5. Расчёт LSI...")
     weights = {
         'm1': 0.20,
-        'm2': 0.35,
+        'm2': 0.45,   # репо ЦБ — главный индикатор
         'm3': 0.20,
-        'm4': 0.00,
-        'm5': 0.25
+        'm5': 0.15,
     }
-    result = calculate_lsi_weighted(result, weights, seasonal_factor_col='Seasonal_Factor')
+    result = calculate_lsi_weighted(result, weights)
     
     # 6. Сохраняем результат
     print("\n6. Сохранение...")
@@ -182,11 +182,8 @@ def run():
     # Статистика по флагам M4
     if 'Tax_Week_Flag' in result.columns:
         print(f"\n  Налоговых недель: {result['Tax_Week_Flag'].sum()} дней")
-        print(f"  Концов месяцев: {result['End_of_Month_Flag'].sum()} дней")
-        print(f"  Концов кварталов: {result['End_of_Quarter_Flag'].sum()} дней")
         print(f"  Seasonal_Factor диапазон: {result['Seasonal_Factor'].min():.2f} — {result['Seasonal_Factor'].max():.2f}")
     
-    # Дополнительная статистика по стресс-эпизодам
     print("\n  СТРЕСС-ЭПИЗОДЫ:")
     episodes = {
         'Декабрь 2014': ('2014-12-01', '2014-12-31'),
@@ -198,20 +195,14 @@ def run():
         if mask.any():
             ep_df = result[mask]
             print(f"    {name}: средний LSI={ep_df['lsi'].mean():.1f}, макс={ep_df['lsi'].max():.1f}")
-        else:
-            print(f"    {name}: нет данных")
     
-    print("=" * 50)
-    
-    # 8. Генерация LLM-комментария (бонусный модуль)
+    # 8. Генерация LLM-комментария (бонус)
     print("\n8. Генерация аналитического комментария...")
     try:
         from modules.llm_commentator import add_commentary_to_lsi
         
-        # Получаем последнюю строку LSI
         last_row = result.iloc[-1]
         
-        # Вклад модулей для последнего дня
         modules_contrib = {
             'm1': result['signal_m1'].iloc[-1] * 100,
             'm2': result['signal_m2'].iloc[-1] * 100,
@@ -219,7 +210,6 @@ def run():
             'm5': result['signal_m5'].iloc[-1] * 100,
         }
         
-        # Активные флаги
         active_flags = []
         if 'Tax_Week_Flag' in result.columns and result['Tax_Week_Flag'].iloc[-1]:
             active_flags.append('Налоговая неделя')
@@ -228,21 +218,17 @@ def run():
         if 'End_of_Quarter_Flag' in result.columns and result['End_of_Quarter_Flag'].iloc[-1]:
             active_flags.append('Конец квартала')
         
-        # Ближайшие налоговые даты из M4
         tax_dates = []
         if not m4.empty:
             future_tax = m4[m4['date'] > pd.Timestamp.now()]['date'].head(5)
             tax_dates = future_tax.dt.strftime('%Y-%m-%d').tolist()
         
-        # Ближайшие аукционы ОФЗ из M3
         ofz_dates = []
         if not m3.empty:
-            # Используем даты из m3_output, где был реальный аукцион (cover_ratio не повторяется)
-            auction_days = m3.drop_duplicates(subset=['cover_ratio', 'yield_spread'], keep='first')
+            auction_days = m3.drop_duplicates(subset=['cover_ratio'], keep='first')
             future_ofz = auction_days[auction_days['date'] > pd.Timestamp.now()]['date'].head(5)
             ofz_dates = future_ofz.dt.strftime('%Y-%m-%d').tolist()
         
-        # Генерируем комментарий
         commentary = add_commentary_to_lsi(
             lsi_value=last_row['lsi'],
             status=last_row['status'],
@@ -254,18 +240,18 @@ def run():
         
         print(f"\n💬 АНАЛИТИЧЕСКИЙ КОММЕНТАРИЙ:\n{commentary}")
         
-        # Сохраняем комментарий в отдельный файл (опционально)
         commentary_path = os.path.join(PROCESSED_DIR, "last_commentary.txt")
         with open(commentary_path, 'w', encoding='utf-8') as f:
             f.write(f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"LSI: {last_row['lsi']:.1f} ({last_row['status']})\n")
             f.write(f"Комментарий:\n{commentary}")
-        
+            
     except ImportError:
         print("  Модуль llm_commentator не найден. Пропускаем генерацию комментария.")
     except Exception as e:
         print(f"  Ошибка при генерации комментария: {e}")
-        
+    
+    print("\n" + "=" * 50)
     return result
 
 if __name__ == "__main__":

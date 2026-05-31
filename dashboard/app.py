@@ -65,8 +65,10 @@ fig.add_trace(go.Scatter(
 ))
 
 # Добавляем зоны
-fig.add_hline(y=40, line_dash="dash", line_color="orange", annotation_text="Жёлтая зона (40)", annotation_position="bottom right")
-fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Красная зона (70)", annotation_position="top right")
+fig.add_hline(y=40, line_dash="dash", line_color="orange", 
+              annotation_text="Жёлтая зона (40)", annotation_position="bottom right")
+fig.add_hline(y=70, line_dash="dash", line_color="red", 
+              annotation_text="Красная зона (70)", annotation_position="top right")
 
 fig.update_layout(
     title="Динамика индекса стресса ликвидности за всё время",
@@ -76,14 +78,15 @@ fig.update_layout(
     hovermode='x unified'
 )
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width='stretch')
 
-# ---- Графики модулей (теперь 3 графика) ----
+# ---- Сигналы модулей (последние 365 дней) ----
 st.subheader("📊 Сигналы модулей (последние 365 дней)")
 
 last_year = df.tail(365)
 
-col1, col2, col3 = st.columns(3)
+# Создаём 2 ряда по 2 графика для лучшего отображения
+col1, col2 = st.columns(2)
 
 with col1:
     if 'stress_m1' in df.columns:
@@ -119,6 +122,8 @@ with col2:
         )
         st.plotly_chart(fig_m2, width='stretch')
 
+col3, col4 = st.columns(2)
+
 with col3:
     if 'stress_m3' in df.columns:
         fig_m3 = go.Figure()
@@ -136,27 +141,80 @@ with col3:
         )
         st.plotly_chart(fig_m3, width='stretch')
 
+with col4:
+    if 'stress_m5' in df.columns:
+        fig_m5 = go.Figure()
+        fig_m5.add_trace(go.Scatter(
+            x=last_year['date'], 
+            y=last_year['stress_m5'],
+            mode='lines', 
+            name='M5 - казначейство',
+            line=dict(color='purple', width=2)
+        ))
+        fig_m5.update_layout(
+            title="M5: Средства казначейства",
+            yaxis_title="Стресс (0-10)",
+            height=300
+        )
+        st.plotly_chart(fig_m5, width='stretch')
+
+# ---- Дополнительная информация по M4 (налоговый мультипликатор) ----
+if 'Seasonal_Factor' in df.columns and 'Tax_Week_Flag' in df.columns:
+    st.subheader("📅 Налоговый календарь (M4)")
+    
+    # Показываем текущий налоговый фактор
+    latest_factor = latest['Seasonal_Factor']
+    tax_week = latest['Tax_Week_Flag']
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Текущий налоговый фактор", f"{latest_factor:.2f}")
+    with col2:
+        st.metric("Налоговая неделя", "ДА" if tax_week == 1 else "НЕТ")
+    
+    # График налогового фактора за последние 90 дней
+    last_90 = df.tail(90)
+    fig_factor = go.Figure()
+    fig_factor.add_trace(go.Scatter(
+        x=last_90['date'], 
+        y=last_90['Seasonal_Factor'],
+        mode='lines',
+        name='Seasonal Factor',
+        line=dict(color='orange', width=2),
+        fill='tozeroy',
+        fillcolor='rgba(255,165,0,0.2)'
+    ))
+    fig_factor.update_layout(
+        title="Налоговый мультипликатор (1.0-1.4)",
+        yaxis_title="Коэффициент",
+        xaxis_title="Дата",
+        height=300
+    )
+    st.plotly_chart(fig_factor, width='stretch')
+
 # ---- Алерт ----
 st.subheader("🚨 Текущий алерт")
 
 if lsi >= 70:
     st.error("🔴 **КРАСНЫЙ УРОВЕНЬ СТРЕССА (70-100)**\n\nВысокий риск дефицита ликвидности! Рекомендуется:\n- Усилить мониторинг рынка репо\n- Проверить прогнозы налоговых платежей\n- Подготовить план действий")
 elif lsi >= 40:
-    st.warning("🟡 **ЖЁЛТЫЙ УРОВЕНЬ СТРЕССА (40-70)**\n\nПовышенное внимание к ликвидности. Рекомендуется:\n- Следить за аукционами репо ЦБ\n- Мониторить размещения ОФЗ")
+    st.warning("🟡 **ЖЁЛТЫЙ УРОВЕНЬ СТРЕССА (40-70)**\n\nПовышенное внимание к ликвидности. Рекомендуется:\n- Следить за аукционами репо ЦБ\n- Мониторить размещения ОФЗ\n- Обратить внимание на движение средств казначейства")
 else:
     st.success("🟢 **ЗЕЛЁНЫЙ УРОВЕНЬ (0-40)**\n\nЛиквидность в норме. Продолжать штатный мониторинг.")
 
 # ---- Таблица с последними днями ----
 st.subheader("📋 Последние 10 дней")
 
-available_cols = [c for c in ['date', 'lsi', 'status', 'stress_m1', 'stress_m2', 'stress_m3'] if c in df.columns]
+available_cols = ['date', 'lsi', 'status', 'stress_m1', 'stress_m2', 'stress_m3', 'stress_m5']
+available_cols = [c for c in available_cols if c in df.columns]
+
 display_df = df.tail(10)[available_cols].copy()
 for col in display_df.select_dtypes(include=['float64', 'int64']).columns:
     display_df[col] = display_df[col].round(2)
-st.dataframe(display_df)
+st.dataframe(display_df, use_container_width=True)
 
 # ---- Backtest: стресс-эпизоды ----
-st.subheader("📊 Backtest: стресс-эпизоды")
+st.subheader("📊 Backtest: стресс-эпизоды (по данным ЦБ)")
 
 episodes = {
     'Декабрь 2014': ('2014-12-01', '2014-12-31'),
@@ -169,11 +227,20 @@ for name, (start, end) in episodes.items():
     mask = (df['date'] >= start) & (df['date'] <= end)
     if mask.any():
         episode_df = df[mask]
+        # Определяем статус по среднему LSI
+        mean_lsi = episode_df['lsi'].mean()
+        if mean_lsi >= 70:
+            ep_status = "КРАСНЫЙ"
+        elif mean_lsi >= 40:
+            ep_status = "ЖЁЛТЫЙ"
+        else:
+            ep_status = "ЗЕЛЁНЫЙ"
+        
         episode_stats.append({
             'Эпизод': name,
             'Средний LSI': f"{episode_df['lsi'].mean():.1f}",
             'Макс LSI': f"{episode_df['lsi'].max():.1f}",
-            'Статус': episode_df['status'].mode().iloc[0] if not episode_df['status'].mode().empty else 'Н/Д'
+            'Статус': ep_status
         })
 
 if episode_stats:
@@ -181,6 +248,51 @@ if episode_stats:
 else:
     st.info("Данные за стресс-эпизоды не найдены в текущем диапазоне дат")
 
-# ---- Информация ----
-st.caption(f"📅 Последнее обновление: {latest['date'].strftime('%Y-%m-%d')} | Система раннего предупреждения стресса ликвидности")
-st.caption(f"📊 Всего дней в истории: {len(df)} | Период: {df['date'].min().strftime('%Y-%m-%d')} — {df['date'].max().strftime('%Y-%m-%d')}")
+# ---- Распределение LSI по зонам ----
+st.subheader("📊 Распределение LSI по зонам")
+
+zone_counts = {
+    'Зелёная (0-40)': (df['lsi'] < 40).sum(),
+    'Жёлтая (40-70)': ((df['lsi'] >= 40) & (df['lsi'] < 70)).sum(),
+    'Красная (70-100)': (df['lsi'] >= 70).sum()
+}
+
+fig_pie = go.Figure(data=[go.Pie(
+    labels=list(zone_counts.keys()),
+    values=list(zone_counts.values()),
+    marker_colors=['green', 'orange', 'red'],
+    hole=0.3
+)])
+fig_pie.update_layout(title="Процент времени в каждой зоне", height=400)
+st.plotly_chart(fig_pie, width='stretch')
+
+# ---- Информация о системе ----
+st.subheader("ℹ️ О системе")
+
+st.markdown("""
+**Liquidity Sentinel** — система раннего предупреждения стресса ликвидности рублёвого денежного рынка.
+
+**Компоненты:**
+- **M1** — усреднение обязательных резервов (данные ЦБ)
+- **M2** — аукционы репо ЦБ (7-дневные аукционы)
+- **M3** — размещение ОФЗ (спрос/предложение)
+- **M4** — налоговый календарь (сезонный мультипликатор)
+- **M5** — средства федерального казначейства (ЕКС)
+
+**Формула LSI:** взвешенная сумма сигналов с сигмоидой + налоговый мультипликатор
+
+**Интерпретация:**
+- 🟢 0-40: нормальный уровень, штатный режим
+- 🟡 40-70: повышенное внимание, возможен стресс
+- 🔴 70-100: высокий стресс, требуется немедленная реакция
+""")
+
+# ---- Footer ----
+st.divider()
+col1, col2 = st.columns(2)
+with col1:
+    st.caption(f"📅 Последнее обновление: {latest['date'].strftime('%Y-%m-%d')}")
+with col2:
+    st.caption(f"📊 Всего дней в истории: {len(df)} | Период: {df['date'].min().strftime('%Y-%m-%d')} — {df['date'].max().strftime('%Y-%m-%d')}")
+
+st.caption("🏦 Система раннего предупреждения стресса ликвидности | ПСБ Казначейство")
