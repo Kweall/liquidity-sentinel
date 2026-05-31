@@ -203,6 +203,69 @@ def run():
     
     print("=" * 50)
     
+    # 8. Генерация LLM-комментария (бонусный модуль)
+    print("\n8. Генерация аналитического комментария...")
+    try:
+        from modules.llm_commentator import add_commentary_to_lsi
+        
+        # Получаем последнюю строку LSI
+        last_row = result.iloc[-1]
+        
+        # Вклад модулей для последнего дня
+        modules_contrib = {
+            'm1': result['signal_m1'].iloc[-1] * 100,
+            'm2': result['signal_m2'].iloc[-1] * 100,
+            'm3': result['signal_m3'].iloc[-1] * 100,
+            'm5': result['signal_m5'].iloc[-1] * 100,
+        }
+        
+        # Активные флаги
+        active_flags = []
+        if 'Tax_Week_Flag' in result.columns and result['Tax_Week_Flag'].iloc[-1]:
+            active_flags.append('Налоговая неделя')
+        if 'End_of_Month_Flag' in result.columns and result['End_of_Month_Flag'].iloc[-1]:
+            active_flags.append('Конец месяца')
+        if 'End_of_Quarter_Flag' in result.columns and result['End_of_Quarter_Flag'].iloc[-1]:
+            active_flags.append('Конец квартала')
+        
+        # Ближайшие налоговые даты из M4
+        tax_dates = []
+        if not m4.empty:
+            future_tax = m4[m4['date'] > pd.Timestamp.now()]['date'].head(5)
+            tax_dates = future_tax.dt.strftime('%Y-%m-%d').tolist()
+        
+        # Ближайшие аукционы ОФЗ из M3
+        ofz_dates = []
+        if not m3.empty:
+            # Используем даты из m3_output, где был реальный аукцион (cover_ratio не повторяется)
+            auction_days = m3.drop_duplicates(subset=['cover_ratio', 'yield_spread'], keep='first')
+            future_ofz = auction_days[auction_days['date'] > pd.Timestamp.now()]['date'].head(5)
+            ofz_dates = future_ofz.dt.strftime('%Y-%m-%d').tolist()
+        
+        # Генерируем комментарий
+        commentary = add_commentary_to_lsi(
+            lsi_value=last_row['lsi'],
+            status=last_row['status'],
+            modules_contrib=modules_contrib,
+            active_flags=active_flags,
+            tax_calendar=tax_dates,
+            upcoming_ofz=ofz_dates
+        )
+        
+        print(f"\n💬 АНАЛИТИЧЕСКИЙ КОММЕНТАРИЙ:\n{commentary}")
+        
+        # Сохраняем комментарий в отдельный файл (опционально)
+        commentary_path = os.path.join(PROCESSED_DIR, "last_commentary.txt")
+        with open(commentary_path, 'w', encoding='utf-8') as f:
+            f.write(f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"LSI: {last_row['lsi']:.1f} ({last_row['status']})\n")
+            f.write(f"Комментарий:\n{commentary}")
+        
+    except ImportError:
+        print("  Модуль llm_commentator не найден. Пропускаем генерацию комментария.")
+    except Exception as e:
+        print(f"  Ошибка при генерации комментария: {e}")
+        
     return result
 
 if __name__ == "__main__":
