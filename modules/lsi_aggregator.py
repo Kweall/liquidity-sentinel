@@ -1,28 +1,58 @@
 import pandas as pd
 import numpy as np
 import os
+import sys
+from pathlib import Path
 from datetime import datetime
+import subprocess
 
 PROCESSED_DIR = "data/processed"
+MODULES_DIR = "modules"
+
+def ensure_module_output(module_name: str) -> bool:
+    """Запускает модуль, если его выходной файл отсутствует."""
+    output_path = os.path.join(PROCESSED_DIR, f"{module_name}_output.parquet")
+    if os.path.exists(output_path):
+        return True
+    
+    print(f"  Выходной файл {module_name}_output.parquet не найден. Запускаю модуль {module_name}...")
+    try:
+        script_path = os.path.join(MODULES_DIR, f"{module_name}.py")
+        result = subprocess.run(
+            [sys.executable, script_path],
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).parent.parent
+        )
+        if result.returncode != 0:
+            print(f"  Ошибка при запуске {module_name}: {result.stderr}")
+            return False
+        print(f"  Модуль {module_name} успешно выполнен")
+        return os.path.exists(output_path)
+    except Exception as e:
+        print(f"  Не удалось запустить {module_name}: {e}")
+        return False
 
 def load_module_data(module_name: str) -> pd.DataFrame:
-    """Загружает данные модуля из parquet"""
+    """Загружает данные модуля из parquet, при необходимости сначала запуская модуль."""
+    ensure_module_output(module_name)
     path = os.path.join(PROCESSED_DIR, f"{module_name}_output.parquet")
     if os.path.exists(path):
         df = pd.read_parquet(path)
         print(f"  Загружен {module_name}: {len(df)} строк, {df['date'].min().date()} - {df['date'].max().date()}")
         return df
     else:
-        print(f"  Предупреждение: {path} не найден")
+        print(f"  Предупреждение: {path} не найден даже после запуска")
         return pd.DataFrame()
 
 def normalize_stress(stress_series: pd.Series) -> pd.Series:
     """Приводит stress (0-10) к 0-1"""
     return stress_series / 10.0
 
-def calculate_lsi_weighted(df: pd.DataFrame, weights: dict) -> pd.DataFrame:
+def calculate_lsi_weighted(df: pd.DataFrame, weights: dict, seasonal_factor_col: str = None) -> pd.DataFrame:
     """
     Рассчитывает LSI как взвешенную сумму сигналов с сигмоидой
+    и применением сезонного множителя (если указан).
     """
     df = df.copy()
     
@@ -42,6 +72,11 @@ def calculate_lsi_weighted(df: pd.DataFrame, weights: dict) -> pd.DataFrame:
     else:
         df['lsi_raw'] = sum(available_signals) / total_weight
     
+    # Применяем сезонный множитель (если есть)
+    if seasonal_factor_col and seasonal_factor_col in df.columns:
+        print(f"  Применяется сезонный множитель: {seasonal_factor_col}")
+        df['lsi_raw'] = df['lsi_raw'] * df[seasonal_factor_col]
+    
     # Применяем сигмоиду для нелинейности
     k = 6.0
     df['lsi'] = 100 / (1 + np.exp(-k * (df['lsi_raw'] - 0.5)))
@@ -59,11 +94,13 @@ def run():
     print(f"Время: {datetime.now()}")
     print("=" * 50)
     
-    # 1. Загружаем все доступные модули
+    # 1. Загружаем все доступные модули (они запустятся автоматически при необходимости)
     print("\n1. Загрузка данных модулей:")
     m1 = load_module_data('m1')
     m2 = load_module_data('m2')
     m3 = load_module_data('m3')
+    m4 = load_module_data('m4')
+    m5 = load_module_data('m5')
     
     # 2. Склеиваем по дате
     print("\n2. Склеивание данных...")
@@ -74,6 +111,10 @@ def run():
         dfs.append(m2[['date', 'stress_m2']])
     if not m3.empty:
         dfs.append(m3[['date', 'stress_m3']])
+    if not m4.empty:
+        dfs.append(m4[['date', 'Tax_Week_Flag', 'End_of_Month_Flag', 'End_of_Quarter_Flag', 'Seasonal_Factor']])
+    if not m5.empty:
+        dfs.append(m5[['date', 'stress_m5']])
     
     if not dfs:
         raise RuntimeError("Нет данных ни от одного модуля")
@@ -88,30 +129,37 @@ def run():
     
     # 3. Заполняем пропуски
     print("\n3. Обработка пропусков...")
-    for col in ['stress_m1', 'stress_m2', 'stress_m3']:
+    for col in ['stress_m1', 'stress_m2', 'stress_m3', 'stress_m5']:
         if col in result.columns:
             result[col] = result[col].ffill().bfill().fillna(0)
+        else:
+            result[col] = 0  # создаём колонку с нулями, если её нет
+    
+    # Для флагов M4: заполняем NaN нулями (нет события)
+    for col in ['Tax_Week_Flag', 'End_of_Month_Flag', 'End_of_Quarter_Flag', 'Seasonal_Factor']:
+        if col in result.columns:
+            result[col] = result[col].fillna(0)
+        else:
+            result[col] = 0
     
     # 4. Нормализуем сигналы
     print("\n4. Нормализация сигналов...")
     result['signal_m1'] = normalize_stress(result['stress_m1'])
     result['signal_m2'] = normalize_stress(result['stress_m2'])
     result['signal_m3'] = normalize_stress(result['stress_m3'])
+    result['signal_m4'] = 0  # M4 не даёт stress
+    result['signal_m5'] = normalize_stress(result['stress_m5']) if 'stress_m5' in result.columns else 0
     
-    # Заглушки для будущих модулей (пока 0)
-    result['signal_m4'] = 0
-    result['signal_m5'] = 0
-    
-    # 5. Рассчитываем LSI с обновлёнными весами
+    # 5. Рассчитываем LSI с обновлёнными весами и учётом сезонности
     print("\n5. Расчёт LSI...")
     weights = {
-        'm1': 0.30,   # усреднение резервов
-        'm2': 0.40,   # репо ЦБ (самый важный)
-        'm3': 0.30,   # ОФЗ
-        'm4': 0.0,    # налоги (ждём)
-        'm5': 0.0     # казначейство (ждём)
+        'm1': 0.20,
+        'm2': 0.35,
+        'm3': 0.20,
+        'm4': 0.00,
+        'm5': 0.25
     }
-    result = calculate_lsi_weighted(result, weights)
+    result = calculate_lsi_weighted(result, weights, seasonal_factor_col='Seasonal_Factor')
     
     # 6. Сохраняем результат
     print("\n6. Сохранение...")
@@ -130,6 +178,13 @@ def run():
     print(f"  Красных дней (LSI >= 70): {(result['lsi'] >= 70).sum()}")
     print(f"  Жёлтых дней (40-70): {((result['lsi'] >= 40) & (result['lsi'] < 70)).sum()}")
     print(f"  Зелёных дней (<40): {(result['lsi'] < 40).sum()}")
+    
+    # Статистика по флагам M4
+    if 'Tax_Week_Flag' in result.columns:
+        print(f"\n  Налоговых недель: {result['Tax_Week_Flag'].sum()} дней")
+        print(f"  Концов месяцев: {result['End_of_Month_Flag'].sum()} дней")
+        print(f"  Концов кварталов: {result['End_of_Quarter_Flag'].sum()} дней")
+        print(f"  Seasonal_Factor диапазон: {result['Seasonal_Factor'].min():.2f} — {result['Seasonal_Factor'].max():.2f}")
     
     # Дополнительная статистика по стресс-эпизодам
     print("\n  СТРЕСС-ЭПИЗОДЫ:")

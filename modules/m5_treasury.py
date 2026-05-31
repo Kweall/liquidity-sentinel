@@ -7,6 +7,9 @@ import glob
 from bs4 import BeautifulSoup
 from urllib3.exceptions import InsecureRequestWarning
 from docx import Document
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from modules.utils import mad_score, validate_module_output
 
 requests.packages.urllib3.disable_warnings(category=InsecureRequestWarning)
