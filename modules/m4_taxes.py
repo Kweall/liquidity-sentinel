@@ -13,46 +13,32 @@ PROCESSED_DIR = "data/processed"
 TAX_CALENDAR_CSV = os.path.join(RAW_DIR, "tax_calendar.csv")
 
 def ensure_tax_calendar():
-    """Если tax_calendar.csv отсутствует, запускает m4_fetch_tax_calendar.py"""
     if not os.path.exists(TAX_CALENDAR_CSV):
-        print("  Налоговый календарь не найден. Запускаю его загрузку и парсинг...")
+        print("  Налоговый календарь не найден. Запускаю его загрузку...")
         script_path = Path(__file__).parent.parent / "scripts" / "m4_fetch_tax_calendar.py"
         if not script_path.exists():
-            raise FileNotFoundError(
-                f"Скрипт {script_path} не найден. "
-                "Убедитесь, что scripts/m4_fetch_tax_calendar.py существует."
-            )
+            raise FileNotFoundError(f"Скрипт {script_path} не найден.")
         result = subprocess.run([sys.executable, str(script_path)], capture_output=True, text=True)
         if result.returncode != 0:
-            print(f"  Ошибка при запуске m4_fetch_tax_calendar.py:\n{result.stderr}")
             raise RuntimeError("Не удалось загрузить налоговый календарь")
-        print("  Загрузка завершена успешно.")
+        print("  Загрузка завершена.")
 
 def load_tax_calendar() -> pd.DataFrame:
-    """Загружает налоговый календарь из CSV (при необходимости сначала создаёт его)."""
     ensure_tax_calendar()
     df = pd.read_csv(TAX_CALENDAR_CSV, parse_dates=['date'], encoding='utf-8')
     print(f"  Загружено налоговых событий: {len(df)}")
     return df
 
 def build_calendar_flags(df_tax: pd.DataFrame, start_date: pd.Timestamp, end_date: pd.Timestamp) -> pd.DataFrame:
-    """Создаёт ежедневный календарь флагов"""
     date_range = pd.date_range(start_date, end_date, freq='D')
     calendar = pd.DataFrame({'date': date_range})
     
-    # Флаг конца месяца
-    calendar['End_of_Month_Flag'] = (
-        calendar['date'] == calendar['date'].dt.to_period('M').dt.end_time.dt.normalize()
-    ).astype(int)
+    calendar['End_of_Month_Flag'] = (calendar['date'] == calendar['date'].dt.to_period('M').dt.end_time.dt.normalize()).astype(int)
     
-    # Флаг конца квартала
     quarter_end_months = [3, 6, 9, 12]
-    calendar['End_of_Quarter_Flag'] = (
-        calendar['date'].dt.month.isin(quarter_end_months) & 
-        (calendar['date'] == calendar['date'].dt.to_period('Q').dt.end_time.dt.normalize())
-    ).astype(int)
+    calendar['End_of_Quarter_Flag'] = (calendar['date'].dt.month.isin(quarter_end_months) & 
+                                        (calendar['date'] == calendar['date'].dt.to_period('Q').dt.end_time.dt.normalize())).astype(int)
     
-    # Флаг налоговой недели (7 дней до и после каждого налогового события)
     tax_event_dates = set(df_tax['date'].dt.normalize())
     calendar['Tax_Week_Flag'] = 0
     
@@ -64,44 +50,26 @@ def build_calendar_flags(df_tax: pd.DataFrame, start_date: pd.Timestamp, end_dat
     
     return calendar
 
-def calculate_seasonal_factor(df_m1: pd.DataFrame, df_m2: pd.DataFrame, calendar: pd.DataFrame) -> pd.DataFrame:
-    """Рассчитывает Seasonal_Factor как отношение среднего стресса в налоговые недели к обычным дням"""
-    merged = calendar.copy()
-    
-    if not df_m1.empty:
-        merged = merged.merge(df_m1[['date', 'stress_m1']], on='date', how='left')
-    if not df_m2.empty:
-        merged = merged.merge(df_m2[['date', 'stress_m2']], on='date', how='left')
-    
-    # Создаём прокси-стресс как среднее доступных
-    stress_cols = []
-    if 'stress_m1' in merged.columns:
-        stress_cols.append(merged['stress_m1'].fillna(0))
-    if 'stress_m2' in merged.columns:
-        stress_cols.append(merged['stress_m2'].fillna(0))
-    
-    if stress_cols:
-        merged['proxy_stress'] = np.mean(stress_cols, axis=0)
-    else:
-        merged['proxy_stress'] = 0
-    
-    # Средний стресс в налоговые недели и обычные дни
-    tax_weeks = merged[merged['Tax_Week_Flag'] == 1]['proxy_stress'].mean()
-    normal_days = merged[merged['Tax_Week_Flag'] == 0]['proxy_stress'].mean()
-    
-    if normal_days <= 0:
-        seasonal_factor = 1.0
-    else:
-        seasonal_factor = min(tax_weeks / normal_days, 1.4) if tax_weeks > 0 else 1.0
-        seasonal_factor = max(seasonal_factor, 1.0)
-    
+def calculate_seasonal_factor(calendar: pd.DataFrame) -> pd.DataFrame:
+    """Рассчитывает Seasonal_Factor с градацией по типу налогового периода"""
+    calendar = calendar.copy()
     calendar['Seasonal_Factor'] = 1.0
-    calendar.loc[calendar['Tax_Week_Flag'] == 1, 'Seasonal_Factor'] = seasonal_factor
+    
+    # Базовая налоговая неделя
+    mask_tax = calendar['Tax_Week_Flag'] == 1
+    calendar.loc[mask_tax, 'Seasonal_Factor'] = 1.1
+    
+    # Конец квартала — дополнительное давление
+    mask_quarter = calendar['End_of_Quarter_Flag'] == 1
+    calendar.loc[mask_quarter & mask_tax, 'Seasonal_Factor'] = 1.25
+    
+    # Конец года (декабрь) — максимальное давление
+    mask_year_end = (calendar['date'].dt.month == 12) & mask_quarter
+    calendar.loc[mask_year_end & mask_tax, 'Seasonal_Factor'] = 1.4
     
     return calendar
 
 def process_m4(df_m1: pd.DataFrame = None, df_m2: pd.DataFrame = None) -> pd.DataFrame:
-    """Основная логика модуля M4"""
     if df_m1 is None:
         df_m1 = pd.DataFrame()
     if df_m2 is None:
@@ -117,7 +85,7 @@ def process_m4(df_m1: pd.DataFrame = None, df_m2: pd.DataFrame = None) -> pd.Dat
     calendar = build_calendar_flags(df_tax, start_date, end_date)
     
     print("Расчёт Seasonal_Factor...")
-    calendar = calculate_seasonal_factor(df_m1, df_m2, calendar)
+    calendar = calculate_seasonal_factor(calendar)
     
     result = calendar[['date', 'Tax_Week_Flag', 'End_of_Month_Flag', 'End_of_Quarter_Flag', 'Seasonal_Factor']].copy()
     result['date'] = pd.to_datetime(result['date']).astype('datetime64[ns]')
@@ -135,7 +103,6 @@ def run(df_m1: pd.DataFrame = None, df_m2: pd.DataFrame = None) -> pd.DataFrame:
             df_m1 = pd.read_parquet(m1_path)
             print(f"Загружен M1: {len(df_m1)} строк")
         else:
-            print("Предупреждение: M1 не найден, Seasonal_Factor будет рассчитан без него")
             df_m1 = pd.DataFrame()
     
     if df_m2 is None:
@@ -144,7 +111,6 @@ def run(df_m1: pd.DataFrame = None, df_m2: pd.DataFrame = None) -> pd.DataFrame:
             df_m2 = pd.read_parquet(m2_path)
             print(f"Загружен M2: {len(df_m2)} строк")
         else:
-            print("Предупреждение: M2 не найден, Seasonal_Factor будет рассчитан без него")
             df_m2 = pd.DataFrame()
     
     result = process_m4(df_m1, df_m2)
@@ -154,7 +120,7 @@ def run(df_m1: pd.DataFrame = None, df_m2: pd.DataFrame = None) -> pd.DataFrame:
     print(f"\nМ4 готов: {len(result)} строк")
     print(f"Период: {result['date'].min().date()} — {result['date'].max().date()}")
     print(f"Налоговых недель: {result['Tax_Week_Flag'].sum()}")
-    print(f"Seasonal_Factor диапазон: {result['Seasonal_Factor'].min():.2f} — {result['Seasonal_Factor'].max():.2f}")
+    print(f"Seasonal_Factor распределение:\n{result['Seasonal_Factor'].value_counts().sort_index()}")
     
     return result
 

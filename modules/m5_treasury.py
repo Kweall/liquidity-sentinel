@@ -189,26 +189,27 @@ def process_m5(cbr_df: pd.DataFrame, roskazna_df: pd.DataFrame = None) -> pd.Dat
     if roskazna_df is not None and not roskazna_df.empty:
         roskazna_unique = roskazna_df.drop_duplicates(subset=['date'], keep='last')
         df = df.merge(roskazna_unique, on='date', how='left')
-        df['deposits_placed'] = df['deposits_placed'].ffill().bfill()
-        df['participants'] = df['participants'].ffill().bfill()
+        df['deposits_placed'] = df['deposits_placed'].ffill().bfill().fillna(0)
+        df['participants'] = df['participants'].ffill().bfill().fillna(0)
     else:
-        df['deposits_placed'] = np.nan
-        df['participants'] = np.nan
+        df['deposits_placed'] = 0
+        df['participants'] = 0
     
     df = df.sort_values('date')
     df['delta_eks_monthly'] = df['total_eks'].diff()
     df['delta_deposits'] = df['deposits_placed'].diff() if 'deposits_placed' in df.columns else np.nan
-    df['Flag_Budget_Drain'] = ((df['delta_eks_monthly'].abs() > 300) & (df['delta_eks_monthly'] < 0)).astype(int)
     
-    df['Flag_EndOfMonth'] = (
-        df['date'] == df['date'].dt.to_period('M').dt.end_time.dt.normalize()
-    ).astype(int)
+    # Порог 10 млрд для оттока (было 20)
+    df['Flag_Budget_Drain'] = ((df['delta_eks_monthly'].abs() > 10) & (df['delta_eks_monthly'] < 0)).astype(int)
+    
+    # Дополнительный флаг для сильного оттока (>30 млрд)
+    df['Flag_Strong_Drain'] = ((df['delta_eks_monthly'].abs() > 30) & (df['delta_eks_monthly'] < 0)).astype(int)
+    
+    df['Flag_EndOfMonth'] = (df['date'] == df['date'].dt.to_period('M').dt.end_time.dt.normalize()).astype(int)
 
     quarter_end_months = [3, 6, 9, 12]
-    df['Flag_EndOfQuarter'] = (
-        df['date'].dt.month.isin(quarter_end_months) & 
-        (df['date'] == df['date'].dt.to_period('Q').dt.end_time.dt.normalize())
-    ).astype(int)
+    df['Flag_EndOfQuarter'] = (df['date'].dt.month.isin(quarter_end_months) & 
+                                (df['date'] == df['date'].dt.to_period('Q').dt.end_time.dt.normalize())).astype(int)
     
     if 'deposits_placed' in df.columns:
         df['Flag_HighPlacement'] = (df['deposits_placed'] > df['deposits_placed'].median() * 1.5).astype(int)
@@ -218,11 +219,20 @@ def process_m5(cbr_df: pd.DataFrame, roskazna_df: pd.DataFrame = None) -> pd.Dat
     df['mad_score_cbr'] = mad_score(df['delta_eks_monthly'], window=60)
     df['mad_score_roskazna'] = mad_score(df['delta_deposits'], window=60) if 'delta_deposits' in df.columns else np.nan
     
-    cbr_stress = df['mad_score_cbr'].clip(lower=0).fillna(0)
-    roskazna_stress = df['mad_score_roskazna'].clip(lower=0).fillna(0) if 'mad_score_roskazna' in df.columns else 0
+    # Увеличиваем чувствительность: просто используем абсолютное значение MAD-скора
+    cbr_stress = df['mad_score_cbr'].abs().fillna(0)
+    roskazna_stress = df['mad_score_roskazna'].abs().fillna(0) if 'mad_score_roskazna' in df.columns else 0
     
+    # Нормализуем до 0-10 (MAD скор обычно от -5 до +5)
+    cbr_stress = (cbr_stress * 1.0).clip(0, 10)
+    roskazna_stress = (roskazna_stress * 1.0).clip(0, 10)
+    
+    # Stress как среднее
     df['stress_m5'] = (0.7 * cbr_stress + 0.3 * roskazna_stress).clip(0, 10)
-    df['stress_m5'] *= np.where(df['Flag_Budget_Drain'] == 1, 1.2, 1.0)
+    
+    # Бонусы за флаги
+    df['stress_m5'] *= np.where(df['Flag_Budget_Drain'] == 1, 1.5, 1.0)
+    df['stress_m5'] *= np.where(df['Flag_Strong_Drain'] == 1, 2.0, 1.0)
     df['stress_m5'] = df['stress_m5'].clip(0, 10)
     
     result = df[[
@@ -235,6 +245,7 @@ def process_m5(cbr_df: pd.DataFrame, roskazna_df: pd.DataFrame = None) -> pd.Dat
         'mad_score_roskazna',
         'stress_m5',
         'Flag_Budget_Drain',
+        'Flag_Strong_Drain',
         'Flag_EndOfMonth',
         'Flag_EndOfQuarter',
         'Flag_HighPlacement'
@@ -248,7 +259,6 @@ def process_m5(cbr_df: pd.DataFrame, roskazna_df: pd.DataFrame = None) -> pd.Dat
     return result
 
 def run(docx_file: str = None) -> pd.DataFrame:
-    """Точка входа модуля M5"""
     os.makedirs(RAW_DIR, exist_ok=True)
     os.makedirs(PROCESSED_DIR, exist_ok=True)
     cbr_data = fetch_cbr_budget_data()
@@ -260,8 +270,9 @@ def run(docx_file: str = None) -> pd.DataFrame:
         print(f"\nМ5 готов: {len(result)} строк")
         print(f"Период: {result['date'].min().date()} — {result['date'].max().date()}")
         print(f"Stress диапазон: {result['stress_m5'].min():.2f} — {result['stress_m5'].max():.2f}")
-        print(f"Флагов оттока: {result['Flag_Budget_Drain'].sum()}")
-        print(f"Флагов конца месяца: {result['Flag_EndOfMonth'].sum()}")
+        print(f"Флагов оттока (порог 10 млрд): {result['Flag_Budget_Drain'].sum()}")
+        print(f"Флагов сильного оттока (30 млрд): {result['Flag_Strong_Drain'].sum()}")
+        print(f"Средний stress_m5: {result['stress_m5'].mean():.2f}")
         
     return result
 
