@@ -86,7 +86,7 @@ def is_index_row(row):
 
 def detect_schema(columns):
     cols = [str(c).lower() for c in columns]
-    if any("формат" in c for c in cols):
+    if any("формат" in c for c in cols) or len(columns) >= 16:
         return "modern"
     return "legacy"
 
@@ -101,9 +101,42 @@ def extract_by_position(df):
 
 
 def extract_by_name(df):
+    """
+    Для современных файлов (2024+) колонки имеют фиксированные индексы:
+    0 - Дата
+    1 - Формат* (пропускаем)
+    2 - Код выпуска
+    3 - Тип бумаги
+    4 - Дата погашения
+    5 - Дней до погашения
+    6 - Объем предложения
+    7 - Цена отсечения
+    8 - Цена средневзвешенная
+    9 - Доходность по цене отсечения
+    10 - Доходность по средневзвешенной цене
+    11 - Совокупный объем спроса по номиналу
+    12 - Объем размещения по номиналу
+    13 - Объем выручки
+    14 - Коэффициент удовлетворения спроса
+    """
     out = pd.DataFrame()
-    for key, col_name in MODERN_MAP.items():
-        out[key] = df[col_name] if col_name in df.columns else np.nan
+    
+    # Используем индексы для современных файлов
+    out['date'] = pd.to_datetime(df.iloc[:, 0], errors='coerce')
+    out['code'] = df.iloc[:, 2].astype(str).str.strip()
+    out['type'] = df.iloc[:, 3]
+    out['maturity_date'] = df.iloc[:, 4]
+    out['days'] = safe_to_numeric(df.iloc[:, 5])
+    out['offer_volume'] = safe_to_numeric(df.iloc[:, 6])
+    out['cut_price'] = safe_to_numeric(df.iloc[:, 7])
+    out['avg_price'] = safe_to_numeric(df.iloc[:, 8])
+    out['yield_cut'] = safe_to_numeric(df.iloc[:, 9])
+    out['yield_avg'] = safe_to_numeric(df.iloc[:, 10])
+    out['demand'] = safe_to_numeric(df.iloc[:, 11])
+    out['placement'] = safe_to_numeric(df.iloc[:, 12])
+    out['revenue'] = safe_to_numeric(df.iloc[:, 13])
+    out['placement_ratio'] = safe_to_numeric(df.iloc[:, 14])
+    
     return out
 
 
