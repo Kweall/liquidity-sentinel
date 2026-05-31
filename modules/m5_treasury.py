@@ -25,7 +25,7 @@ def _get_budget_excel_url() -> str | None:
         resp.raise_for_status()
     except Exception:
         return None
-
+    
     soup = BeautifulSoup(resp.text, 'html.parser')
     toggle = soup.find('a', string=lambda t: t and "Бюджетные средства на счетах кредитных организаций" in t)
     if not toggle:
@@ -47,7 +47,7 @@ def fetch_cbr_budget_data() -> pd.DataFrame:
     excel_url = _get_budget_excel_url()
     if not excel_url:
         return pd.DataFrame()
-
+    
     os.makedirs(RAW_DIR, exist_ok=True)
     local_path = os.path.join(RAW_DIR, "cbr_budget_funds.xlsx")
 
@@ -95,7 +95,7 @@ def fetch_roskazna_deposits(docx_path: str = None) -> pd.DataFrame:
         if not files:
             return pd.DataFrame()
         docx_path = files[0]
-
+    
     if not os.path.exists(docx_path):
         return pd.DataFrame()
 
@@ -162,7 +162,7 @@ def fetch_roskazna_deposits(docx_path: str = None) -> pd.DataFrame:
 
     df = pd.DataFrame(records)
     df['date'] = pd.to_datetime(df['date'], dayfirst=True, errors='coerce')
-
+    
     for col in ['placed_volume_mln', 'total_bids_mln', 'cut_off_rate', 'participants', 'term_days']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -180,66 +180,89 @@ def fetch_roskazna_deposits(docx_path: str = None) -> pd.DataFrame:
     df = df.dropna(subset=['date']).groupby('date').agg(agg_dict).reset_index()
     return df[['date'] + [c for c in agg_dict.keys() if c in df.columns]].sort_values('date')
 
-def merge_and_calculate_deltas(cbr_df: pd.DataFrame, roskazna_df: pd.DataFrame = None) -> pd.DataFrame:
+def process_m5(cbr_df: pd.DataFrame, roskazna_df: pd.DataFrame = None) -> pd.DataFrame:
     if cbr_df.empty:
         return pd.DataFrame()
 
     df = cbr_df.copy()
-
+    
     if roskazna_df is not None and not roskazna_df.empty:
         roskazna_unique = roskazna_df.drop_duplicates(subset=['date'], keep='last')
         df = df.merge(roskazna_unique, on='date', how='left')
         df['deposits_placed'] = df['deposits_placed'].ffill().bfill()
+        df['participants'] = df['participants'].ffill().bfill()
     else:
         df['deposits_placed'] = np.nan
-
+        df['participants'] = np.nan
+    
     df = df.sort_values('date')
     df['delta_eks_monthly'] = df['total_eks'].diff()
     df['delta_deposits'] = df['deposits_placed'].diff() if 'deposits_placed' in df.columns else np.nan
     df['Flag_Budget_Drain'] = ((df['delta_eks_monthly'].abs() > 300) & (df['delta_eks_monthly'] < 0)).astype(int)
+    
+    df['Flag_EndOfMonth'] = (
+        df['date'] == df['date'].dt.to_period('M').dt.end_time.dt.normalize()
+    ).astype(int)
 
-    return df
-
-def process_m5(cbr_df: pd.DataFrame, roskazna_df: pd.DataFrame = None) -> pd.DataFrame:
-    df = merge_and_calculate_deltas(cbr_df, roskazna_df)
-    if df.empty:
-        return pd.DataFrame()
-
+    quarter_end_months = [3, 6, 9, 12]
+    df['Flag_EndOfQuarter'] = (
+        df['date'].dt.month.isin(quarter_end_months) & 
+        (df['date'] == df['date'].dt.to_period('Q').dt.end_time.dt.normalize())
+    ).astype(int)
+    
+    if 'deposits_placed' in df.columns:
+        df['Flag_HighPlacement'] = (df['deposits_placed'] > df['deposits_placed'].median() * 1.5).astype(int)
+    else:
+        df['Flag_HighPlacement'] = 0
+    
     df['mad_score_cbr'] = mad_score(df['delta_eks_monthly'], window=60)
     df['mad_score_roskazna'] = mad_score(df['delta_deposits'], window=60) if 'delta_deposits' in df.columns else np.nan
-
+    
     cbr_stress = df['mad_score_cbr'].clip(lower=0).fillna(0)
     roskazna_stress = df['mad_score_roskazna'].clip(lower=0).fillna(0) if 'mad_score_roskazna' in df.columns else 0
-
+    
     df['stress_m5'] = (0.7 * cbr_stress + 0.3 * roskazna_stress).clip(0, 10)
     df['stress_m5'] *= np.where(df['Flag_Budget_Drain'] == 1, 1.2, 1.0)
     df['stress_m5'] = df['stress_m5'].clip(0, 10)
-
-    out_cols = ['date', 'total_eks', 'delta_eks_monthly', 'delta_deposits',
-                'participants', 'mad_score_cbr', 'mad_score_roskazna',
-                'stress_m5', 'Flag_Budget_Drain']
-    result = df[[c for c in out_cols if c in df.columns]].copy()
+    
+    result = df[[
+        'date',
+        'total_eks',
+        'delta_eks_monthly',
+        'deposits_placed',
+        'participants',
+        'mad_score_cbr',
+        'mad_score_roskazna',
+        'stress_m5',
+        'Flag_Budget_Drain',
+        'Flag_EndOfMonth',
+        'Flag_EndOfQuarter',
+        'Flag_HighPlacement'
+    ]].copy()
+    
     result = result.dropna(subset=['mad_score_cbr'])
     result['date'] = pd.to_datetime(result['date']).astype('datetime64[ns]')
     result = result.drop_duplicates(subset=['date']).sort_values('date')
-
+    
     validate_module_output(result, "M5")
     return result
 
 def run(docx_file: str = None) -> pd.DataFrame:
+    """Точка входа модуля M5"""
     os.makedirs(RAW_DIR, exist_ok=True)
     os.makedirs(PROCESSED_DIR, exist_ok=True)
-
     cbr_data = fetch_cbr_budget_data()
     roskazna_data = fetch_roskazna_deposits(docx_file)
     result = process_m5(cbr_data, roskazna_data)
-
+    
     if not result.empty:
         result.to_parquet(os.path.join(PROCESSED_DIR, "m5_output.parquet"), index=False)
         print(f"\nМ5 готов: {len(result)} строк")
         print(f"Период: {result['date'].min().date()} — {result['date'].max().date()}")
         print(f"Stress диапазон: {result['stress_m5'].min():.2f} — {result['stress_m5'].max():.2f}")
-
+        print(f"Флагов оттока: {result['Flag_Budget_Drain'].sum()}")
+        print(f"Флагов конца месяца: {result['Flag_EndOfMonth'].sum()}")
+        
     return result
 
 if __name__ == "__main__":
