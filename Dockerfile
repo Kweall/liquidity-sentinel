@@ -1,16 +1,17 @@
 FROM python:3.11-slim
 
-# Устанавливаем системные зависимости
+# Устанавливаем системные зависимости (включая docker CLI для копирования файлов)
 RUN apt-get update && apt-get install -y \
     git \
     curl \
     wget \
     gnupg \
     zstd \
+    docker.io \
     && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем Ollama (опционально, игнорируем ошибки)
-RUN curl -fsSL https://ollama.com/install.sh | sh || echo "Ollama установка пропущена"
+# Устанавливаем Ollama
+RUN curl -fsSL https://ollama.com/install.sh | sh
 
 # Рабочая директория
 WORKDIR /app

@@ -3,7 +3,7 @@ services:
     image: ollama/ollama:latest
     container_name: liquidity-ollama
     ports:
-      - "11435:11434"  # Используем порт 11435 вместо 11434
+      - "11435:11434"
     volumes:
       - ./ollama_models:/root/.ollama
     restart: unless-stopped
@@ -16,6 +16,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+      - /var/run/docker.sock:/var/run/docker.sock  # для доступа к docker из контейнера
     environment:
       - PYTHONUNBUFFERED=1
       - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=200
