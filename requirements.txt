@@ -10,5 +10,5 @@ streamlit>=1.35
 plotly>=6.0
 lxml
 # anthropic>=0.25
-# schedule>=1.2
+schedule>=1.2
 # pyarrow>=14.0
