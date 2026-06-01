@@ -1,3 +1,11 @@
 __pycache__/
+*.pyc
 venv/
+.env
+.idea/
+.vscode/
+data/raw/*.xlsx
+data/raw/*.csv
+data/processed/*.parquet
 ollama_models/
+*.log

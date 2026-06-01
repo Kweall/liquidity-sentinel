@@ -6,6 +6,10 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "qwen2.5:3b"
 
 def build_prompt(lsi_value, status, modules_contrib, active_flags, tax_calendar, upcoming_ofz):
+<<<<<<< HEAD
+=======
+    """Формирует промпт для LLM"""
+>>>>>>> cd6f846 (new branch)
     prompt = f"""Ты — аналитик по ликвидности денежного рынка. 
 Проанализируй текущую ситуацию и напиши короткий комментарий (3-5 предложений).
 
@@ -28,6 +32,10 @@ def build_prompt(lsi_value, status, modules_contrib, active_flags, tax_calendar,
     return prompt
 
 def generate_commentary(prompt):
+<<<<<<< HEAD
+=======
+    """Отправляет запрос к Ollama и возвращает ответ"""
+>>>>>>> cd6f846 (new branch)
     try:
         response = requests.post(
             OLLAMA_URL,

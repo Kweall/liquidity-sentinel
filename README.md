@@ -40,15 +40,120 @@
 ---
 
 ## Установка и запуск
-
-### 1. Клонирование репозитория
+### Клонирование репозитория
 
 ```bash
 git clone https://github.com/PaVGris/liquidity-sentinel.git
 cd liquidity-sentinel
 ```
 
-### 2. Создание виртуального окружения
+---
+### Быстрый запуск
+
+### Требования
+
+- Docker
+- Docker Compose
+- 8+ GB RAM
+- 10+ GB свободного места
+
+### Запуск
+
+```bash
+# 1. Клонировать репозиторий
+git clone https://github.com/PaVGris/liquidity-sentinel.git
+cd liquidity-sentinel
+
+# 2. Собрать Docker образ (первый запуск или после изменений)
+docker compose build
+
+# 3. Запустить систему
+docker compose up -d
+```
+
+После запуска дашборд будет доступен по адресу: **http://localhost:8501**
+
+### Первый запуск (автоматическая загрузка данных)
+
+При первом запуске система автоматически:
+1. Загрузит модель LLM (~2GB) — это займёт ~5-10 минут
+2. Скачает данные с сайтов ЦБ, Минфина, ФНС
+3. Рассчитает LSI и запустит дашборд
+
+**Дождитесь завершения загрузки модели — дашборд откроется автоматически.**
+
+### Страницы дашборда
+
+| Страница | URL |
+|----------|-----|
+| Главная | http://localhost:8501 |
+| Аналитик (LLM-чат) | http://localhost:8501/Analyst |
+| SHAP анализ | http://localhost:8501/SHAP_Analysis |
+
+### Команды для управления
+
+```bash
+# Собрать образ (после изменений в коде)
+docker compose build
+
+# Запустить в фоне
+docker compose up -d
+
+# Запустить и смотреть логи
+docker compose up
+
+# Остановить
+docker compose down
+
+# Перезапустить
+docker compose restart
+
+# Посмотреть логи
+docker compose logs -f
+
+# Обновить данные (пересчитать LSI)
+docker compose exec liquidity-sentinel python -c "from modules.lsi_aggregator_ml import run; run()"
+```
+
+### Устранение неполадок
+
+### Порт 8501 уже занят
+
+```bash
+# Изменить порт в docker-compose.yml
+ports:
+  - "8502:8501"  # вместо 8501:8501
+```
+
+### Данные не загружаются
+
+```bash
+docker compose exec liquidity-sentinel python -c "from modules.lsi_aggregator_ml import run; run()"
+```
+
+### LLM не отвечает
+
+```bash
+# Проверить статус Ollama
+docker compose logs ollama
+
+# Перезапустить Ollama
+docker compose restart ollama
+```
+
+### Полный сброс (начать с нуля)
+
+```bash
+docker compose down -v
+docker compose build --no-cache
+docker compose up -d
+```
+---
+
+
+## Обычный запуск
+
+### Создание виртуального окружения
 
 ```bash
 python -m venv venv
@@ -56,13 +161,13 @@ source venv/bin/activate      # Linux/Mac
 venv\Scripts\activate         # Windows
 ```
 
-### 3. Установка зависимостей
+### Установка зависимостей
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Дополнительные инструменты
+### Дополнительные инструменты
 
 - **Ollama** (для LLM-модуля) — [скачайте](https://ollama.com/download) и запустите сервер:
   ```bash
@@ -74,7 +179,7 @@ pip install -r requirements.txt
   playwright install chromium
   ```
 
-### 5. Первичный запуск (автоматическая подготовка данных)
+### Первичный запуск (автоматическая подготовка данных)
 
 При первом запуске любого модуля система автоматически загрузит необходимые файлы.
 
@@ -86,7 +191,7 @@ python -m modules.lsi_aggregator
 
 Агрегатор автоматически вызовет все модули, если их выходные файлы отсутствуют.
 
-### 6. Запуск дашборда
+### Запуск дашборда
 
 ```bash
 streamlit run dashboard/app.py

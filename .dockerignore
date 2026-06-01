@@ -1,0 +1,13 @@
+__pycache__
+*.pyc
+.git
+.gitignore
+*.md
+!.dockerignore
+data/processed/*.parquet
+data/raw/*.xlsx
+data/raw/*.csv
+.env
+.vscode
+.idea
+*.log

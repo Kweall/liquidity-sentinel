@@ -62,6 +62,7 @@ class TestM5Process:
 
     def test_mad_window_compatibility(self, sample_cbr_data, sample_roskazna_data):
         result = process_m5(sample_cbr_data, sample_roskazna_data)
+<<<<<<< HEAD
         assert result['mad_score_cbr'].notna().sum() > 10 
     
     def test_output_columns(self, sample_cbr_data, sample_roskazna_data):
@@ -75,3 +76,6 @@ class TestM5Process:
         
         for col in required_cols:
             assert col in result.columns, f"Отсутствует колонка: {col}"
+=======
+        assert result['mad_score_cbr'].notna().sum() > 10 
+>>>>>>> cd6f846 (new branch)

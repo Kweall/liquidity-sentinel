@@ -1,0 +1,26 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: liquidity-ollama
+    ports:
+      - "11435:11434"  # Используем порт 11435 вместо 11434
+    volumes:
+      - ./ollama_models:/root/.ollama
+    restart: unless-stopped
+
+  liquidity-sentinel:
+    build: .
+    container_name: liquidity-sentinel
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    environment:
+      - PYTHONUNBUFFERED=1
+      - STREAMLIT_SERVER_MAX_UPLOAD_SIZE=200
+      - OLLAMA_URL=http://ollama:11434/api/generate
+      - LLM_MODEL=qwen2.5:3b
+    depends_on:
+      - ollama
+    restart: unless-stopped

@@ -186,12 +186,3 @@ def fetch_cbr_liquidity_data():
     except Exception as e:
         print(f"Ошибка чтения Excel: {e}")
         return None
-
-def integrate_ground_truth(lsi_df, ground_truth_df):
-    """
-    Интегрирует ground truth с LSI DataFrame
-    Нужно сопоставить даты и создать целевую переменную (0-100)
-    """
-    # TODO: реализовать сопоставление
-    # В ground truth должно быть что-то типа "дефицит ликвидности" или "stress_level"
-    pass
