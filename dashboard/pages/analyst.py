@@ -3,9 +3,27 @@ import pandas as pd
 import numpy as np
 import requests
 import os
+import json
+from pathlib import Path
 from datetime import datetime, timedelta
 
 PROCESSED_DIR = "data/processed"
+CHAT_HISTORY_FILE = Path("data/processed/tmp/chat_history.json")
+DEFAULT_MESSAGE = """👋 Добро пожаловать в аналитический модуль! Я помогу вам разобраться с ликвидностью.
+
+Вот что я умею:
+
+- 📊 Анализировать текущий LSI и его компоненты
+- 📅 Отвечать на вопросы о конкретных датах и периодах
+- 🔍 Находить стресс-эпизоды в истории
+- 📈 Прогнозировать влияние налогов и аукционов ОФЗ
+
+Задайте вопрос, например:
+
+- Что происходило с ликвидностью в марте 2022?
+- Почему в августе 2023 вырос LSI?
+- Покажи периоды максимального стресса за последний год
+"""
 
 st.set_page_config(page_title="Аналитик — Liquidity Sentinel", layout="wide", page_icon="🧠")
 
@@ -25,6 +43,28 @@ def load_system_data():
         else:
             data[name] = pd.DataFrame()
     return data
+
+def load_chat_history():
+    if CHAT_HISTORY_FILE.exists():
+        try:
+            with open(CHAT_HISTORY_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    return [
+        {
+            "role": "assistant",
+            "content": DEFAULT_MESSAGE
+        }
+    ]
+
+
+def save_chat_history(messages):
+    CHAT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(CHAT_HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(messages, f, ensure_ascii=False, indent=2)
 
 @st.cache_data
 def load_tax_calendar():
@@ -225,9 +265,7 @@ def get_rag_response(question, chat_history):
 # Интерфейс чата
 # =========================
 if "analyst_messages" not in st.session_state:
-    st.session_state.analyst_messages = [
-        {"role": "assistant", "content": "👋 Добро пожаловать в аналитический модуль! Я помогу вам разобраться с ликвидностью.\n\nВот что я умею:\n- 📊 Анализировать текущий LSI и его компоненты\n- 📅 Отвечать на вопросы о конкретных датах и периодах\n- 🔍 Находить стресс-эпизоды в истории\n- 📈 Прогнозировать влияние налогов и аукционов ОФЗ\n\nЗадайте вопрос, например:\n- \"Что происходило с ликвидностью в марте 2022?\"\n- \"Почему в августе 2023 вырос LSI?\"\n- \"Покажи периоды максимального стресса за последний год\""}
-    ]
+    st.session_state.analyst_messages = load_chat_history()
 
 for message in st.session_state.analyst_messages:
     with st.chat_message(message["role"]):
@@ -235,6 +273,7 @@ for message in st.session_state.analyst_messages:
 
 if prompt := st.chat_input("Задайте вопрос о ликвидности..."):
     st.session_state.analyst_messages.append({"role": "user", "content": prompt})
+    save_chat_history(st.session_state.analyst_messages)
     with st.chat_message("user"):
         st.markdown(prompt)
     
@@ -243,6 +282,7 @@ if prompt := st.chat_input("Задайте вопрос о ликвидност�
             answer = get_rag_response(prompt, st.session_state.analyst_messages)
             st.markdown(answer)
             st.session_state.analyst_messages.append({"role": "assistant", "content": answer})
+            save_chat_history(st.session_state.analyst_messages)
 
 # =========================
 # Боковая панель с информацией
@@ -265,3 +305,15 @@ with st.sidebar:
     - Как налоговая неделя влияет на LSI?
     - Что сейчас с ликвидностью?
     """)
+    st.markdown("---")
+    if st.button("🗑️ Очистить историю чата"):
+        st.session_state.analyst_messages = [
+            {
+                "role": "assistant",
+                "content": DEFAULT_MESSAGE
+            }
+        ]
+
+        save_chat_history(st.session_state.analyst_messages)
+
+        st.rerun()

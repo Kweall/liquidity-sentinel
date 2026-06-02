@@ -1,9 +1,17 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+from pathlib import Path
+import shutil
 import os
 
 PROCESSED_DIR = "data/processed"
+TMP_DIR = Path("data/processed/tmp")
+
+if TMP_DIR.exists():
+    shutil.rmtree(TMP_DIR)
+
+TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 st.set_page_config(page_title="Liquidity Sentinel", layout="wide", page_icon="🏦")
 
