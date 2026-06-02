@@ -69,7 +69,6 @@ class LSI_ML_Aggregator:
             
             print(f"  Fold {fold+1}: Train R2={train_scores[-1]:.3f}, Val R2={val_scores[-1]:.3f}")
         
-        # Обучаем на всех данных
         self.model.fit(X, y)
         
         # Создаём SHAP explainer
@@ -84,7 +83,6 @@ class LSI_ML_Aggregator:
         """Предсказывает LSI"""
         X = self.prepare_features(df)
         y_pred = self.model.predict(X)
-        # Ограничиваем 0-100
         return np.clip(y_pred, 0, 100)
     
     def explain(self, df, idx=-1):
@@ -95,7 +93,6 @@ class LSI_ML_Aggregator:
         X = self.prepare_features(df)
         shap_values = self.shap_explainer.shap_values(X)
         
-        # Возвращаем вклад каждого признака
         contributions = dict(zip(self.feature_names, shap_values[idx]))
         return contributions
     
@@ -120,20 +117,14 @@ def run_ml_aggregator(df=None):
     
     aggregator = LSI_ML_Aggregator()
     
-    # Подготавливаем признаки
     X = aggregator.prepare_features(df)
     
     # Создаём целевую переменную (пока на основе взвешенного LSI)
-    # В реальности нужно загрузить ground truth с сайта ЦБ
     y = df['lsi'] / 100.0  # Нормализуем 0-1
     
-    # Обучаем
     aggregator.train(X, y)
-    
-    # Предсказываем
     lsi_ml = aggregator.predict(df)
     
-    # Сравниваем с текущим LSI
     print("\nСравнение LSI (взвешенный) vs LSI (ML):")
     print(pd.DataFrame({
         'date': df['date'],
@@ -141,7 +132,6 @@ def run_ml_aggregator(df=None):
         'LSI_ML': lsi_ml
     }).tail(10))
     
-    # SHAP-объяснение для последнего дня
     contributions = aggregator.explain(df, -1)
     print(f"\nSHAP-вклад модулей (последний день):")
     for feature, value in contributions.items():
@@ -172,7 +162,6 @@ def fetch_cbr_liquidity_data():
     
     soup = BeautifulSoup(resp.text, 'html.parser')
     
-    # Ищем ссылку на Excel-файл
     excel_link = None
     for link in soup.find_all('a'):
         href = link.get('href', '')

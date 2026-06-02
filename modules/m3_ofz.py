@@ -171,7 +171,6 @@ def run() -> pd.DataFrame:
     os.makedirs(RAW_DIR, exist_ok=True)
     os.makedirs(PROCESSED_DIR, exist_ok=True)
 
-    # Автоматическая подготовка данных при первом запуске
     ensure_data_updated()
 
     print("Загрузка аукционов ОФЗ...")

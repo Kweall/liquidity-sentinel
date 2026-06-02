@@ -129,7 +129,7 @@ def main():
 
     shutil.rmtree(TMP_DIR, ignore_errors=True)
 
-    print("\n✅ Данные для модуля M3 обновлены:")
+    print("\nДанные для модуля M3 обновлены:")
     print(f"   {output_csv}")
     print(f"   {RAW_DIR / 'dynamic.csv'}")
     print(f"   {RAW_DIR / 'prices.csv'}")

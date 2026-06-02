@@ -46,15 +46,12 @@ def get_all_xml_urls():
     return urls
 
 def fetch_xml_content(xml_url):
-    """Скачивает XML и определяет его кодировку автоматически."""
     headers = {'User-Agent': 'Mozilla/5.0'}
     resp = requests.get(xml_url, headers=headers, timeout=30)
     resp.raise_for_status()
     
-    # Определяем кодировку по содержимому
     detected = chardet.detect(resp.content)
     encoding = detected.get('encoding', 'utf-8')
-    # Корректировка для русских кодировок
     if encoding.lower() == 'windows-1252':
         encoding = 'windows-1251'
     
@@ -111,7 +108,6 @@ def month_name_to_number(name):
     return months.get(name.lower())
 
 def parse_single_xml(xml_content, source_url):
-    """Парсит один XML и возвращает список событий (дата + полное описание + тип)."""
     events = []
     
     pos = 0

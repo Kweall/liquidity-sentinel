@@ -219,18 +219,14 @@ def process_m5(cbr_df: pd.DataFrame, roskazna_df: pd.DataFrame = None) -> pd.Dat
     df['mad_score_cbr'] = mad_score(df['delta_eks_monthly'], window=60)
     df['mad_score_roskazna'] = mad_score(df['delta_deposits'], window=60) if 'delta_deposits' in df.columns else np.nan
     
-    # Увеличиваем чувствительность: просто используем абсолютное значение MAD-скора
     cbr_stress = df['mad_score_cbr'].abs().fillna(0)
     roskazna_stress = df['mad_score_roskazna'].abs().fillna(0) if 'mad_score_roskazna' in df.columns else 0
     
-    # Нормализуем до 0-10 (MAD скор обычно от -5 до +5)
     cbr_stress = (cbr_stress * 1.0).clip(0, 10)
     roskazna_stress = (roskazna_stress * 1.0).clip(0, 10)
     
-    # Stress как среднее
     df['stress_m5'] = (0.7 * cbr_stress + 0.3 * roskazna_stress).clip(0, 10)
     
-    # Бонусы за флаги
     df['stress_m5'] *= np.where(df['Flag_Budget_Drain'] == 1, 1.5, 1.0)
     df['stress_m5'] *= np.where(df['Flag_Strong_Drain'] == 1, 2.0, 1.0)
     df['stress_m5'] = df['stress_m5'].clip(0, 10)

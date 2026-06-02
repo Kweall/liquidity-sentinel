@@ -48,7 +48,6 @@ def load_module_data(module_name: str) -> pd.DataFrame:
 def normalize_stress(stress_series: pd.Series) -> pd.Series:
     """Приводит stress (0-10) к 0-1 с усилением низких значений"""
     normalized = stress_series / 10.0
-    # Усиливаем сигнал (возводим в степень 0.7 для поднятия низких значений)
     return normalized ** 0.7
 
 def calculate_lsi_weighted(df: pd.DataFrame, weights: dict) -> pd.DataFrame:
@@ -57,7 +56,6 @@ def calculate_lsi_weighted(df: pd.DataFrame, weights: dict) -> pd.DataFrame:
     """
     df = df.copy()
     
-    # Собираем доступные сигналы
     available_signals = []
     total_weight = 0
     
@@ -78,7 +76,6 @@ def calculate_lsi_weighted(df: pd.DataFrame, weights: dict) -> pd.DataFrame:
         df['lsi_raw'] = df['lsi_raw'] * df['Seasonal_Factor']
         print(f"  Применён Seasonal_Factor (диапазон: {df['Seasonal_Factor'].min():.2f} - {df['Seasonal_Factor'].max():.2f})")
     
-    # Агрессивная сигмоида (k=10, порог 0.4)
     k = 10.0
     df['lsi'] = 100 / (1 + np.exp(-k * (df['lsi_raw'] - 0.4)))
     df['lsi'] = df['lsi'].clip(0, 100)
@@ -123,7 +120,6 @@ def run():
     for df in dfs[1:]:
         result = result.merge(df, on='date', how='outer')
     
-    # Добавляем M4 (налоги) с флагами
     if not m4.empty:
         m4_cols = ['date', 'Tax_Week_Flag', 'End_of_Month_Flag', 'End_of_Quarter_Flag', 'Seasonal_Factor']
         result = result.merge(m4[m4_cols], on='date', how='left')
@@ -131,27 +127,23 @@ def run():
     result = result.sort_values('date').reset_index(drop=True)
     print(f"  Объединено: {len(result)} уникальных дат")
     
-    # 3. Обработка пропусков
     print("\n3. Обработка пропусков...")
     for col in ['stress_m1', 'stress_m2', 'stress_m3', 'stress_m5']:
         if col in result.columns:
             result[col] = result[col].ffill().bfill().fillna(0)
     
-    # Заполняем M4 пропуски
     for col in ['Tax_Week_Flag', 'End_of_Month_Flag', 'End_of_Quarter_Flag', 'Seasonal_Factor']:
         if col in result.columns:
             result[col] = result[col].ffill().bfill().fillna(0)
         else:
             result[col] = 0
     
-    # 4. Нормализуем сигналы (с усилением)
     print("\n4. Нормализация сигналов...")
     result['signal_m1'] = normalize_stress(result['stress_m1'])
     result['signal_m2'] = normalize_stress(result['stress_m2'])
     result['signal_m3'] = normalize_stress(result['stress_m3'])
     result['signal_m5'] = normalize_stress(result['stress_m5'])
     
-    # 5. Расчёт LSI с обновлёнными весами
     print("\n5. Расчёт LSI...")
     weights = {
         'm1': 0.20,
@@ -162,13 +154,11 @@ def run():
     }
     result = calculate_lsi_weighted(result, weights)
     
-    # 6. Сохраняем результат
     print("\n6. Сохранение...")
     os.makedirs(PROCESSED_DIR, exist_ok=True)
     output_path = os.path.join(PROCESSED_DIR, "lsi_output.parquet")
     result.to_parquet(output_path, index=False)
     
-    # 7. Статистика
     print("\n" + "=" * 50)
     print("РЕЗУЛЬТАТЫ АГРЕГАЦИИ:")
     print(f"  Период: {result['date'].min().date()} — {result['date'].max().date()}")
@@ -180,7 +170,6 @@ def run():
     print(f"  Жёлтых дней (40-70): {((result['lsi'] >= 40) & (result['lsi'] < 70)).sum()}")
     print(f"  Зелёных дней (<40): {(result['lsi'] < 40).sum()}")
     
-    # Статистика по флагам M4
     if 'Tax_Week_Flag' in result.columns:
         print(f"\n  Налоговых недель: {result['Tax_Week_Flag'].sum()} дней")
         print(f"  Seasonal_Factor диапазон: {result['Seasonal_Factor'].min():.2f} — {result['Seasonal_Factor'].max():.2f}")
@@ -197,7 +186,6 @@ def run():
             ep_df = result[mask]
             print(f"    {name}: средний LSI={ep_df['lsi'].mean():.1f}, макс={ep_df['lsi'].max():.1f}")
     
-    # 8. Генерация LLM-комментария (бонус)
     print("\n8. Генерация аналитического комментария...")
     try:
         from modules.llm_commentator import add_commentary_to_lsi

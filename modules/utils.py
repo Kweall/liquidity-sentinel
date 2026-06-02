@@ -21,10 +21,6 @@ def mad_score(series: pd.Series, window: int = 756) -> pd.Series:
     return score
 
 def validate_module_output(df: pd.DataFrame, module_name: str) -> bool:
-    """
-    Проверяет, что модуль вернул датафрейм правильного формата.
-    Вызывают все модули перед return.
-    """
     assert 'date' in df.columns, f"{module_name}: нет колонки date"
     assert is_datetime64_any_dtype(df['date']), "{module_name}: date не datetime ({df['date'].dtype})"
     assert df['date'].is_monotonic_increasing, f"{module_name}: даты не отсортированы"
@@ -36,10 +32,6 @@ import os
 from datetime import datetime
 
 def download_file(url: str, save_path: str, force_update: bool = False) -> str:
-    """
-    Скачивает файл если его нет или он старше 1 дня.
-    Возвращает путь к файлу.
-    """
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
     file_exists = os.path.exists(save_path)
